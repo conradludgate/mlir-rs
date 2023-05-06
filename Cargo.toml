@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 bumpalo = "3.12.1"
 hashbrown = { version = "0.13.2", features = ["raw"] }
-
+generational-arena = "0.2.8"
