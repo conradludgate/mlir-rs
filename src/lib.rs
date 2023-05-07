@@ -1,14 +1,13 @@
 #![warn(unused_crate_dependencies)]
 
-use std::{
-    fmt,
-    hash::{BuildHasher, Hash, Hasher},
-};
-
 use generational_arena::{Arena, Index};
-use hashbrown::{hash_map::DefaultHashBuilder, raw::RawTable};
 
+mod interner;
 pub mod passes;
+pub use interner::InternedStr;
+use interner::Interner;
+mod display;
+mod walk;
 
 #[derive(Debug)]
 pub struct Region {
@@ -154,6 +153,10 @@ impl Context {
     }
 }
 
+pub struct Module<'c> {
+    inner: BlockBuilder<'c>,
+}
+
 pub struct OpBuilder<'c> {
     ctx: &'c mut Context,
     id: OpId,
@@ -297,65 +300,10 @@ impl<'c> BlockBuilder<'c> {
         }
     }
 }
-#[derive(Default)]
-struct Interner {
-    bytes: String,
-    hash_builder: DefaultHashBuilder,
-    table: RawTable<InternedStr>,
-}
-
-impl fmt::Debug for Interner {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Interner").finish_non_exhaustive()
-    }
-}
-
-impl Interner {
-    pub fn clear(&mut self) {
-        self.bytes.clear();
-        self.table.clear_no_drop();
-    }
-
-    pub fn get(&self, i: InternedStr) -> Option<&str> {
-        self.bytes.get(i.range())
-    }
-
-    pub fn intern(&mut self, str: &str) -> InternedStr {
-        fn make_hash(hash_builder: &DefaultHashBuilder, str: &str) -> u64 {
-            let mut state = hash_builder.build_hasher();
-            str.hash(&mut state);
-            state.finish()
-        }
-
-        let hash = make_hash(&self.hash_builder, str);
-        if let Some(i) = self.table.get(hash, |i| &self.bytes[i.range()] == str) {
-            *i
-        } else {
-            let s = u32::try_from(self.bytes.len())
-                .expect("interned string should not exceed u32::MAX");
-            self.bytes.push_str(str);
-            let e = u32::try_from(self.bytes.len())
-                .expect("interned string should not exceed u32::MAX");
-
-            *self.table.insert_entry(hash, InternedStr(s, e), |i| {
-                make_hash(&self.hash_builder, &self.bytes[i.range()])
-            })
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct InternedStr(u32, u32);
-
-impl InternedStr {
-    fn range(self) -> std::ops::Range<usize> {
-        self.0 as usize..self.1 as usize
-    }
-}
 
 #[cfg(test)]
 mod tests {
-    use crate::Context;
+    use crate::{passes::PassManager, Context};
 
     #[test]
     fn toy_module() {
@@ -388,209 +336,8 @@ mod tests {
         };
         let module = module.finish().unwrap_err();
 
-        dbg!(module);
+        let module = dbg!(module);
+
+        // let pm = PassManager::default();
     }
-}
-
-pub struct Module<'c> {
-    inner: BlockBuilder<'c>,
-}
-
-impl fmt::Debug for Module<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        BlockDisplay {
-            ctx: self.inner.ctx,
-            id: self.inner.id,
-        }
-        .fmt(f)
-    }
-}
-
-impl fmt::Debug for BlockBuilder<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        BlockDisplay {
-            ctx: self.ctx,
-            id: self.id,
-        }
-        .fmt(f)
-    }
-}
-
-impl fmt::Debug for RegionBuilder<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        RegionDisplay {
-            ctx: self.ctx,
-            id: self.id,
-        }
-        .fmt(f)
-    }
-}
-impl fmt::Debug for OpBuilder<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        OpDisplay {
-            ctx: self.ctx,
-            id: self.id,
-        }
-        .fmt(f)
-    }
-}
-
-struct BlockDisplay<'c> {
-    ctx: &'c Context,
-    id: BlockId,
-}
-struct RegionsDisplay<'c> {
-    ctx: &'c Context,
-    id: RegionId,
-}
-struct RegionDisplay<'c> {
-    ctx: &'c Context,
-    id: RegionId,
-}
-struct OpDisplay<'c> {
-    ctx: &'c Context,
-    id: OpId,
-}
-
-impl fmt::Debug for BlockDisplay<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let block = self.ctx.get_block(self.id).unwrap();
-        let mut f = f.debug_tuple(self.ctx.interner.get(block.name).unwrap());
-
-        let mut op = block.op_head;
-        while let Some(o) = self.ctx.get_op(op) {
-            f.field(&OpDisplay {
-                ctx: self.ctx,
-                id: op,
-            });
-            op = o.next;
-        }
-
-        f.finish()
-    }
-}
-
-impl fmt::Debug for RegionsDisplay<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut f = f.debug_list();
-
-        let mut region = self.id;
-        while let Some(r) = self.ctx.get_region(region) {
-            f.entry(&RegionDisplay {
-                ctx: self.ctx,
-                id: region,
-            });
-            region = r.next;
-        }
-
-        f.finish()
-    }
-}
-
-impl fmt::Debug for RegionDisplay<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let region = self.ctx.get_region(self.id).unwrap();
-        let mut f = f.debug_list();
-
-        let mut block = region.block_head;
-        while let Some(b) = self.ctx.get_block(block) {
-            f.entry(&BlockDisplay {
-                ctx: self.ctx,
-                id: block,
-            });
-            block = b.next;
-        }
-
-        f.finish()
-    }
-}
-
-impl fmt::Debug for OpDisplay<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let op = self.ctx.get_op(self.id).unwrap();
-        let mut f = f.debug_struct(&format!(
-            "{}.{}",
-            self.ctx.interner.get(op.namespace).unwrap(),
-            self.ctx.interner.get(op.operation).unwrap()
-        ));
-
-        f.field(
-            "regions",
-            &RegionsDisplay {
-                ctx: self.ctx,
-                id: op.region_head,
-            },
-        );
-
-        f.finish()
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum WalkOrder {
-    /// With PreOrder, the root node comes first
-    PreOrder,
-    /// With PostOrder, the root node comes last
-    PostOrder,
-    // no InOrder as we don't deal exclusively with binary trees
-}
-
-pub enum WalkResult<B> {
-    /// Stop execution entirely
-    Break(B),
-    /// Continue deeper
-    Continue,
-    /// Don't descend any deeper,
-    Skip,
-}
-
-impl OpBuilder<'_> {
-    /// Recursively walk the operations
-    pub fn walk_ops<B>(
-        &self,
-        order: WalkOrder,
-        mut f: impl FnMut(&Operation) -> WalkResult<B>,
-    ) -> WalkResult<B> {
-        let op = self.ctx.get_op(self.id).unwrap();
-        walk_ops(self.ctx, op, order, &mut f)
-    }
-}
-
-fn walk_ops<B>(
-    ctx: &Context,
-    op: &Operation,
-    order: WalkOrder,
-    f: &mut impl FnMut(&Operation) -> WalkResult<B>,
-) -> WalkResult<B> {
-    if let WalkOrder::PreOrder = order {
-        match f(op) {
-            WalkResult::Break(b) => return WalkResult::Break(b),
-            WalkResult::Skip => return WalkResult::Continue,
-            WalkResult::Continue => {}
-        }
-    }
-
-    let mut region = op.region_head;
-    while let Some(r) = ctx.get_region(region) {
-        let mut block = r.block_head;
-        while let Some(b) = ctx.get_block(block) {
-            let mut op = b.op_head;
-            while let Some(o) = ctx.get_op(op) {
-                if let WalkResult::Break(b) = walk_ops(ctx, o, order, f) {
-                    return WalkResult::Break(b);
-                }
-                op = o.next;
-            }
-            block = b.next;
-        }
-        region = r.next;
-    }
-
-    if let WalkOrder::PostOrder = order {
-        if let WalkResult::Break(b) = f(op) {
-            return WalkResult::Break(b);
-        }
-    }
-
-    WalkResult::Continue
 }

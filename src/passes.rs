@@ -1,33 +1,48 @@
 use crate::{Context, Operation};
-struct PassError {}
+pub struct PassError {}
 
-trait Pass {
-    fn run(&self, pm: &PassManager, ctx: &Context, op: &Operation) -> Result<(), PassError>;
+pub trait Pass {
+    fn run(&self, ctx: &Context, op: &Operation) -> Result<(), PassError>;
 }
 
-struct PassManager {
+#[derive(Default)]
+pub struct PassManager {
     passes: Vec<Box<dyn Pass>>,
 }
 
 impl PassManager {
-    fn run(&self, ctx: &Context, op: &Operation) -> Result<(), PassError> {
+    pub fn run(&self, ctx: &Context, op: &Operation) -> Result<(), PassError> {
         for pass in &self.passes {
-            pass.run(self, ctx, op)?;
+            pass.run(ctx, op)?;
         }
         Ok(())
     }
+
+    pub fn add_pass(&mut self, p: Box<impl Pass + 'static>) {
+        self.passes.push(p)
+    }
 }
 
-struct RecursivePass;
-impl Pass for RecursivePass {
-    fn run(&self, pm: &PassManager, ctx: &Context, op: &Operation) -> Result<(), PassError> {
+#[derive(Default)]
+pub struct NestedPassManager {
+    pm: PassManager,
+}
+
+impl NestedPassManager {
+    pub fn add_pass(&mut self, p: Box<impl Pass + 'static>) {
+        self.pm.add_pass(p)
+    }
+}
+
+impl Pass for NestedPassManager {
+    fn run(&self, ctx: &Context, op: &Operation) -> Result<(), PassError> {
         let mut region = op.region_head;
         while let Some(r) = ctx.get_region(region) {
             let mut block = r.block_head;
             while let Some(b) = ctx.get_block(block) {
                 let mut op = b.op_head;
                 while let Some(o) = ctx.get_op(op) {
-                    pm.run(ctx, o)?;
+                    self.run(ctx, o)?;
                     op = o.next;
                 }
                 block = b.next;
