@@ -52,3 +52,12 @@ impl Pass for NestedPassManager {
         Ok(())
     }
 }
+
+pub trait Convert {
+    type State;
+
+    /// determine if this convert applies to the operation. If it does, return `Some(state)`
+    fn find(&self, ctx: &Context, op: &Operation) -> Option<Self::State>;
+    /// apply the rewrite
+    fn rewrite(&self, ctx: &mut Context, op: &Operation, state: Self::State);
+}
