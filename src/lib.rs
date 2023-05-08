@@ -1,11 +1,14 @@
 #![warn(unused_crate_dependencies)]
 
+use dialects::{Dialect, Op, OpTable};
 use generational_arena::{Arena, Index};
 
 mod interner;
 pub mod passes;
+use hashbrown::{raw::RawTable, HashMap, HashSet};
 pub use interner::InternedStr;
 use interner::Interner;
+pub mod dialects;
 mod display;
 mod walk;
 
@@ -88,6 +91,7 @@ pub struct Context {
     ops: Arena<Operation>,
     regions: Arena<Region>,
     blocks: Arena<Block>,
+    operations: OpTable,
 }
 
 fn invalid_index() -> Index {
@@ -130,7 +134,12 @@ impl Context {
         self.interner.intern(str)
     }
 
-    pub fn module_builder(&mut self, name: InternedStr) -> BlockBuilder {
+    pub fn register_op(&mut self, op: &'static dyn Op) {
+        self.operations.insert(op)
+    }
+
+    pub fn module_builder(&mut self, dialect: &'static dyn Dialect) -> BlockBuilder {
+        let name = self.interner.intern(dialect.name());
         let id = BlockId(self.blocks.insert(Block {
             parent_region: RegionId(invalid_index()),
             next: BlockId(invalid_index()),
@@ -256,8 +265,12 @@ impl<'c> BlockBuilder<'c> {
         self.ctx.intern(str)
     }
 
-    pub fn add_op(self, ns: InternedStr, op: InternedStr) -> OpBuilder<'c> {
+    pub fn add_op(self, op: &'static dyn Op) -> OpBuilder<'c> {
         let tail = self.ctx.get_block_mut(self.id).unwrap().op_tail;
+
+        self.ctx.register_op(op);
+        let ns = self.ctx.intern(op.dialect().name());
+        let op = self.ctx.intern(op.name());
 
         let id = OpId(self.ctx.ops.insert(Operation {
             namespace: ns,
@@ -303,28 +316,65 @@ impl<'c> BlockBuilder<'c> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{passes::PassManager, Context};
+    use crate::{
+        dialects::{Dialect, Op},
+        Context,
+    };
+
+    struct ToyDialect;
+    impl Dialect for ToyDialect {
+        fn name(&self) -> &'static str {
+            "toy"
+        }
+    }
+
+    struct ToyFuncOp;
+    struct ToyTransposeOp;
+
+    impl Op for ToyFuncOp {
+        fn dialect(&self) -> &'static dyn crate::dialects::Dialect {
+            &ToyDialect
+        }
+
+        fn name(&self) -> &'static str {
+            "func"
+        }
+
+        fn verify(&self, _op: &crate::Operation) -> Result<(), crate::dialects::OpError> {
+            Ok(())
+        }
+    }
+
+    impl Op for ToyTransposeOp {
+        fn dialect(&self) -> &'static dyn crate::dialects::Dialect {
+            &ToyDialect
+        }
+
+        fn name(&self) -> &'static str {
+            "transpose"
+        }
+
+        fn verify(&self, _op: &crate::Operation) -> Result<(), crate::dialects::OpError> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn toy_module() {
         let mut ctx = Context::default();
 
-        let toy = ctx.intern("toy");
-
-        let mut module = ctx.module_builder(toy);
+        let module = ctx.module_builder(&ToyDialect);
         let module = {
-            let func = module.intern("func");
-            let op = module.add_op(toy, func);
+            let op = module.add_op(&ToyFuncOp);
 
             let op = {
                 let mut region = op.add_region();
 
                 let region = {
                     let bb0 = region.intern("bb0");
-                    let mut block = region.add_block(bb0);
-                    let transpose = block.intern("transpose");
+                    let block = region.add_block(bb0);
 
-                    let block = block.add_op(toy, transpose).finish();
+                    let block = block.add_op(&ToyTransposeOp).finish();
 
                     block.finish().unwrap()
                 };
@@ -337,6 +387,7 @@ mod tests {
         let module = module.finish().unwrap_err();
 
         let module = dbg!(module);
+        dbg!(module.inner.ctx);
 
         // let pm = PassManager::default();
     }

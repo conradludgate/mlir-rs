@@ -13,7 +13,7 @@ For eaxmple, Rust goes through many stages of compilation levels. These include
 * THIR - Typed HIR - HIR with all types checked and inferred, and all concepts of structs and traits are removed. All implicit behaviour like autoref are also made explicit here.
 * MIR - Mid-level IR - This is THIR with all high level control flow structures removed. They are replaced entirely with jumps
 * LIR - Low-level IR - This doesn't yet exist, but it's a theoretical lowering from MIR into a data-dependency graph.
-* LLVMIR or CLIR - LLVM and CraneLift are backend compilers that eventually lower themselves into object files. Combined with a linker, these make an executible. They use their own IR.
+* LLVMIR or CLIF - LLVM and CraneLift are codegen backends.
 
 That's a lot to keep track of, and as a result there is 560000 lines of code in the Rust compiler.
 
@@ -69,12 +69,11 @@ Both of these follow a similar system of recursively walking the tree of operati
 
 Passes can be defined on generic operations, or specific ones, or specific patterns of operations.
 
-
 The way I'm currently thinking about this is that all operations have a weight to them. All passes should guarantee that the weight of the tree is reduced. I'm not sure if this is worth implementing however.
 
 ## Dialects
 
-I plan to implement some of the basic dialects from MLIR (Affine, ControlFlow, Bufferization, Memref etc) as well as use CLIR instead of LLVMIR.
+I plan to implement some of the basic dialects from MLIR (Affine, ControlFlow, Bufferization, Memref etc) as well as use CLIF instead of LLVMIR.
 
 I am going with Cranelift instead of LLVM for 2 reasons:
 
