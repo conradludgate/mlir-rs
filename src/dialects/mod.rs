@@ -1,4 +1,4 @@
-use std::{any::Any, fmt};
+use std::fmt;
 
 use hashbrown::{hash_map::DefaultHashBuilder, raw::RawTable};
 
@@ -10,8 +10,22 @@ pub trait Dialect {
     fn name(&self) -> &'static str;
 }
 
+mod sealed {
+    use std::any::{type_name, Any};
+
+    #[doc(hidden)]
+    pub trait TypeInfo: Any {
+        #[doc(hidden)]
+        fn type_name(&self) -> &'static str {
+            type_name::<Self>()
+        }
+    }
+
+    impl<T: 'static + ?Sized> TypeInfo for T {}
+}
+
 /// Meant to represent a helper to define operations.
-pub trait Op {
+pub trait Op: sealed::TypeInfo {
     fn dialect(&self) -> &'static dyn Dialect;
     fn name(&self) -> &'static str;
 
@@ -40,11 +54,12 @@ impl OpTable {
             op2.dialect().name() == op.dialect().name() && op2.name() == op.name()
         }) {
             if op2.type_id() != op.type_id() {
-                dbg!(op2.type_id(), op.type_id());
                 panic!(
-                    "Operation {}.{} already registered by a different type",
+                    "Operation {}.{} [{}] already registered by a different type [{}]",
                     op.dialect().name(),
                     op.name(),
+                    op.type_name(),
+                    op2.type_name(),
                 )
             }
         } else {

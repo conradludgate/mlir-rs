@@ -1,14 +1,11 @@
 #![warn(unused_crate_dependencies)]
 
-use dialects::{Dialect, Op, OpTable};
+use dialects::{Op, OpTable};
 use generational_arena::{Arena, Index};
 
-mod interner;
-pub mod passes;
-pub use interner::InternedStr;
-use interner::Interner;
 pub mod dialects;
 mod display;
+pub mod passes;
 mod walk;
 
 #[derive(Debug)]
@@ -28,8 +25,6 @@ pub struct Block {
     op_head: OpId,
     op_tail: OpId,
 
-    // name of the block
-    name: InternedStr,
     // args the block requires
     args: Vec<ArgType>,
 }
@@ -41,9 +36,7 @@ pub struct ArgType {
 }
 
 #[derive(Debug)]
-pub struct Arg {
-    pub name: InternedStr,
-}
+pub struct Arg {}
 
 #[derive(Debug)]
 pub struct Operation {
@@ -68,7 +61,7 @@ pub struct Operation {
     location: Location,
 
     // control flow semantics? eg which block should follow
-    successors: Vec<(InternedStr, Vec<Arg>)>,
+    successors: Vec<(BlockId, Vec<Arg>)>,
 }
 
 #[derive(Debug)]
@@ -82,7 +75,6 @@ pub struct Attribute {}
 
 #[derive(Default, Debug)]
 pub struct Context {
-    interner: Interner,
     ops: Arena<Operation>,
     regions: Arena<Region>,
     blocks: Arena<Block>,
@@ -125,15 +117,11 @@ impl Context {
 }
 
 impl Context {
-    pub fn intern(&mut self, str: &str) -> InternedStr {
-        self.interner.intern(str)
-    }
-
     pub fn register_op(&mut self, op: &'static dyn Op) {
         self.operations.insert(op)
     }
 
-    pub fn module_builder(&mut self, name: InternedStr) -> BlockBuilder {
+    pub fn module_builder(&mut self) -> BlockBuilder {
         let id = BlockId(self.blocks.insert(Block {
             parent_region: RegionId(invalid_index()),
             next: BlockId(invalid_index()),
@@ -141,7 +129,6 @@ impl Context {
             op_head: OpId(invalid_index()),
             op_tail: OpId(invalid_index()),
 
-            name,
             args: vec![],
         }));
 
@@ -149,7 +136,6 @@ impl Context {
     }
 
     pub fn reset(&mut self) {
-        self.interner.clear();
         self.ops.clear();
         self.regions.clear();
         self.blocks.clear();
@@ -176,10 +162,6 @@ pub struct BlockBuilder<'c> {
 }
 
 impl<'c> OpBuilder<'c> {
-    pub fn intern(&mut self, str: &str) -> InternedStr {
-        self.ctx.intern(str)
-    }
-
     pub fn add_region(self) -> RegionBuilder<'c> {
         let tail = self.ctx.get_op_mut(self.id).unwrap().region_tail;
 
@@ -214,11 +196,7 @@ impl<'c> OpBuilder<'c> {
 }
 
 impl<'c> RegionBuilder<'c> {
-    pub fn intern(&mut self, str: &str) -> InternedStr {
-        self.ctx.intern(str)
-    }
-
-    pub fn add_block(self, name: InternedStr) -> BlockBuilder<'c> {
+    pub fn add_block(self) -> BlockBuilder<'c> {
         let tail = self.ctx.get_region_mut(self.id).unwrap().block_tail;
 
         let id = BlockId(self.ctx.blocks.insert(Block {
@@ -228,7 +206,6 @@ impl<'c> RegionBuilder<'c> {
             op_head: OpId(invalid_index()),
             op_tail: OpId(invalid_index()),
 
-            name,
             args: vec![],
         }));
 
@@ -255,10 +232,6 @@ impl<'c> RegionBuilder<'c> {
 }
 
 impl<'c> BlockBuilder<'c> {
-    pub fn intern(&mut self, str: &str) -> InternedStr {
-        self.ctx.intern(str)
-    }
-
     pub fn add_op(self, op: &'static dyn Op) -> OpBuilder<'c> {
         let tail = self.ctx.get_block_mut(self.id).unwrap().op_tail;
 
@@ -354,17 +327,15 @@ mod tests {
     fn toy_module() {
         let mut ctx = Context::default();
 
-        let main_block = ctx.intern("main");
-        let module = ctx.module_builder(main_block);
+        let module = ctx.module_builder();
         let module = {
             let op = module.add_op(&ToyFuncOp);
 
             let op = {
-                let mut region = op.add_region();
+                let region = op.add_region();
 
                 let region = {
-                    let bb0 = region.intern("bb0");
-                    let block = region.add_block(bb0);
+                    let block = region.add_block();
 
                     let block = block.add_op(&ToyTransposeOp).finish();
 
@@ -382,5 +353,38 @@ mod tests {
         dbg!(module.inner.ctx);
 
         // let pm = PassManager::default();
+    }
+
+    struct ToyFuncOp2;
+
+    impl Op for ToyFuncOp2 {
+        fn dialect(&self) -> &'static dyn crate::dialects::Dialect {
+            &ToyDialect
+        }
+
+        fn name(&self) -> &'static str {
+            "func"
+        }
+
+        fn verify(&self, _op: &crate::Operation) -> Result<(), crate::dialects::OpError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Operation toy.func [mlir_rs::tests::ToyFuncOp2] already registered by a different type [mlir_rs::tests::ToyFuncOp]"
+    )]
+    fn toy_module_dupe_op() {
+        let mut ctx = Context::default();
+        ctx.register_op(&ToyFuncOp);
+        ctx.register_op(&ToyFuncOp2);
+    }
+
+    #[test]
+    fn toy_module_dupe_same_op() {
+        let mut ctx = Context::default();
+        ctx.register_op(&ToyFuncOp);
+        ctx.register_op(&ToyFuncOp);
     }
 }

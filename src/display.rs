@@ -61,11 +61,11 @@ struct OpDisplay<'c> {
 impl fmt::Debug for BlockDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let block = self.ctx.get_block(self.id).unwrap();
-        let mut f = f.debug_tuple(self.ctx.interner.get(block.name).unwrap());
+        let mut f = f.debug_list();
 
         let mut op = block.op_head;
         while let Some(o) = self.ctx.get_op(op) {
-            f.field(&OpDisplay {
+            f.entry(&OpDisplay {
                 ctx: self.ctx,
                 id: op,
             });
