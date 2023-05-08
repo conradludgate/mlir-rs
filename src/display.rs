@@ -114,11 +114,7 @@ impl fmt::Debug for RegionDisplay<'_> {
 impl fmt::Debug for OpDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let op = self.ctx.get_op(self.id).unwrap();
-        let mut f = f.debug_struct(&format!(
-            "{}.{}",
-            self.ctx.interner.get(op.namespace).unwrap(),
-            self.ctx.interner.get(op.operation).unwrap()
-        ));
+        let mut f = f.debug_struct(&format!("{:?}", op.operation));
 
         f.field(
             "regions",

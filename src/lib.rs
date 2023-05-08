@@ -5,7 +5,6 @@ use generational_arena::{Arena, Index};
 
 mod interner;
 pub mod passes;
-use hashbrown::{raw::RawTable, HashMap, HashSet};
 pub use interner::InternedStr;
 use interner::Interner;
 pub mod dialects;
@@ -54,11 +53,7 @@ pub struct Operation {
     region_head: RegionId,
     region_tail: RegionId,
 
-    // namespace of the dialect
-    namespace: InternedStr,
-
-    // name of the operation
-    operation: InternedStr,
+    operation: &'static dyn Op,
 
     // name of the output SSA values
     outputs: Vec<ArgType>,
@@ -138,8 +133,7 @@ impl Context {
         self.operations.insert(op)
     }
 
-    pub fn module_builder(&mut self, dialect: &'static dyn Dialect) -> BlockBuilder {
-        let name = self.interner.intern(dialect.name());
+    pub fn module_builder(&mut self, name: InternedStr) -> BlockBuilder {
         let id = BlockId(self.blocks.insert(Block {
             parent_region: RegionId(invalid_index()),
             next: BlockId(invalid_index()),
@@ -269,11 +263,8 @@ impl<'c> BlockBuilder<'c> {
         let tail = self.ctx.get_block_mut(self.id).unwrap().op_tail;
 
         self.ctx.register_op(op);
-        let ns = self.ctx.intern(op.dialect().name());
-        let op = self.ctx.intern(op.name());
 
         let id = OpId(self.ctx.ops.insert(Operation {
-            namespace: ns,
             operation: op,
             outputs: vec![],
             args: vec![],
@@ -363,7 +354,8 @@ mod tests {
     fn toy_module() {
         let mut ctx = Context::default();
 
-        let module = ctx.module_builder(&ToyDialect);
+        let main_block = ctx.intern("main");
+        let module = ctx.module_builder(main_block);
         let module = {
             let op = module.add_op(&ToyFuncOp);
 

@@ -60,10 +60,15 @@ impl fmt::Debug for OpTable {
         // Safety: we don't dealloc the table while iterating and we don't remove any buckets
         unsafe {
             for op in self.table.iter() {
-                let op = op.as_ref();
-                f.field(&format_args!("{}.{}", op.dialect().name(), op.name()));
+                f.field(op.as_ref());
             }
         }
         f.finish()
+    }
+}
+
+impl fmt::Debug for dyn Op {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.dialect().name(), self.name())
     }
 }
